@@ -1,5 +1,5 @@
 version: '3'
-x-aws-vpc: arn:aws:ec2:us-east-1:193567999519:vpc/vpc-6320ee07
+x-aws-vpc: vpc-2bb91d4f
 services:
   neo4j:
       image: neo4j:3.3.0
@@ -80,6 +80,6 @@ services:
 networks:
   amundsennet:
 
-volumes:
-  es_data:
-  neo4j_data:
+#volumes:
+#  es_data:
+#  neo4j_data:
