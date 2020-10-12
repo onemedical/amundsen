@@ -1,0 +1,1313 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Conditions": {
+    "CreateCluster": {
+      "Fn::Equals": [
+        "",
+        {
+          "Ref": "ParameterClusterName"
+        }
+      ]
+    },
+    "CreateLoadBalancer": {
+      "Fn::Equals": [
+        "",
+        {
+          "Ref": "ParameterLoadBalancerARN"
+        }
+      ]
+    }
+  },
+  "Description": "CloudFormation template created by Docker for deploying applications on Amazon ECS",
+  "Parameters": {
+    "ParameterClusterName": {
+      "Description": "Name of the ECS cluster to deploy to (optional)",
+      "Type": "String"
+    },
+    "ParameterLoadBalancerARN": {
+      "Description": "Name of the LoadBalancer to connect to (optional)",
+      "Type": "String"
+    },
+    "ParameterSubnet1Id": {
+      "Description": "SubnetId, for Availability Zone 1 in the region in your VPC",
+      "Type": "AWS::EC2::Subnet::Id"
+    },
+    "ParameterSubnet2Id": {
+      "Description": "SubnetId, for Availability Zone 2 in the region in your VPC",
+      "Type": "AWS::EC2::Subnet::Id"
+    },
+    "ParameterVPCId": {
+      "Description": "ID of the VPC",
+      "Type": "AWS::EC2::VPC::Id"
+    }
+  },
+  "Resources": {
+    "AmundsenAmundsennetNetwork": {
+      "Properties": {
+        "GroupDescription": "amundsen amundsennet Security Group",
+        "GroupName": "AmundsenAmundsennetNetwork",
+        "SecurityGroupIngress": [
+          {
+            "CidrIp": "0.0.0.0/0",
+            "Description": "amundsenfrontend:5000/tcp",
+            "FromPort": 5000,
+            "IpProtocol": "TCP",
+            "ToPort": 5000
+          },
+          {
+            "CidrIp": "0.0.0.0/0",
+            "Description": "neo4j:7474/tcp",
+            "FromPort": 7474,
+            "IpProtocol": "TCP",
+            "ToPort": 7474
+          },
+          {
+            "CidrIp": "0.0.0.0/0",
+            "Description": "neo4j:7687/tcp",
+            "FromPort": 7687,
+            "IpProtocol": "TCP",
+            "ToPort": 7687
+          },
+          {
+            "CidrIp": "0.0.0.0/0",
+            "Description": "elasticsearch:9200/tcp",
+            "FromPort": 9200,
+            "IpProtocol": "TCP",
+            "ToPort": 9200
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "com.docker.compose.project",
+            "Value": "amundsen"
+          },
+          {
+            "Key": "com.docker.compose.network",
+            "Value": "amundsennet"
+          }
+        ],
+        "VpcId": {
+          "Ref": "ParameterVPCId"
+        }
+      },
+      "Type": "AWS::EC2::SecurityGroup"
+    },
+    "AmundsenAmundsennetNetworkIngress": {
+      "Properties": {
+        "Description": "Allow communication within network amundsennet",
+        "GroupId": {
+          "Ref": "AmundsenAmundsennetNetwork"
+        },
+        "IpProtocol": "-1",
+        "SourceSecurityGroupId": {
+          "Ref": "AmundsenAmundsennetNetwork"
+        }
+      },
+      "Type": "AWS::EC2::SecurityGroupIngress"
+    },
+    "AmundsenLoadBalancer": {
+      "Condition": "CreateLoadBalancer",
+      "Properties": {
+        "Name": "AmundsenLoadBalancer",
+        "Scheme": "internet-facing",
+        "Subnets": [
+          {
+            "Ref": "ParameterSubnet1Id"
+          },
+          {
+            "Ref": "ParameterSubnet2Id"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "com.docker.compose.project",
+            "Value": "amundsen"
+          }
+        ],
+        "Type": "network"
+      },
+      "Type": "AWS::ElasticLoadBalancingV2::LoadBalancer"
+    },
+    "AmundsenfrontendService": {
+      "DependsOn": [
+        "AmundsenfrontendTCP5000Listener",
+        "AmundsensearchService",
+        "AmundsenmetadataService"
+      ],
+      "Properties": {
+        "Cluster": {
+          "Fn::If": [
+            "CreateCluster",
+            {
+              "Ref": "Cluster"
+            },
+            {
+              "Ref": "ParameterClusterName"
+            }
+          ]
+        },
+        "DeploymentConfiguration": {
+          "MaximumPercent": 200,
+          "MinimumHealthyPercent": 100
+        },
+        "DeploymentController": {
+          "Type": "ECS"
+        },
+        "DesiredCount": 1,
+        "LaunchType": "FARGATE",
+        "LoadBalancers": [
+          {
+            "ContainerName": "amundsenfrontend",
+            "ContainerPort": 5000,
+            "TargetGroupArn": {
+              "Ref": "AmundsenfrontendTCP5000TargetGroup"
+            }
+          }
+        ],
+        "NetworkConfiguration": {
+          "AwsvpcConfiguration": {
+            "AssignPublicIp": "ENABLED",
+            "SecurityGroups": [
+              {
+                "Ref": "AmundsenAmundsennetNetwork"
+              }
+            ],
+            "Subnets": [
+              {
+                "Ref": "ParameterSubnet1Id"
+              },
+              {
+                "Ref": "ParameterSubnet2Id"
+              }
+            ]
+          }
+        },
+        "PlatformVersion": "1.4.0",
+        "PropagateTags": "SERVICE",
+        "SchedulingStrategy": "REPLICA",
+        "ServiceRegistries": [
+          {
+            "RegistryArn": {
+              "Fn::GetAtt": [
+                "AmundsenfrontendServiceDiscoveryEntry",
+                "Arn"
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "com.docker.compose.project",
+            "Value": "amundsen"
+          },
+          {
+            "Key": "com.docker.compose.service",
+            "Value": "amundsenfrontend"
+          }
+        ],
+        "TaskDefinition": {
+          "Ref": "AmundsenfrontendTaskDefinition"
+        }
+      },
+      "Type": "AWS::ECS::Service"
+    },
+    "AmundsenfrontendServiceDiscoveryEntry": {
+      "Properties": {
+        "Description": "\"amundsenfrontend\" service discovery entry in Cloud Map",
+        "DnsConfig": {
+          "DnsRecords": [
+            {
+              "TTL": 60,
+              "Type": "A"
+            }
+          ],
+          "RoutingPolicy": "MULTIVALUE"
+        },
+        "HealthCheckCustomConfig": {
+          "FailureThreshold": 1
+        },
+        "Name": "amundsenfrontend",
+        "NamespaceId": {
+          "Ref": "CloudMap"
+        }
+      },
+      "Type": "AWS::ServiceDiscovery::Service"
+    },
+    "AmundsenfrontendTCP5000Listener": {
+      "Properties": {
+        "DefaultActions": [
+          {
+            "ForwardConfig": {
+              "TargetGroups": [
+                {
+                  "TargetGroupArn": {
+                    "Ref": "AmundsenfrontendTCP5000TargetGroup"
+                  }
+                }
+              ]
+            },
+            "Type": "forward"
+          }
+        ],
+        "LoadBalancerArn": {
+          "Fn::If": [
+            "CreateLoadBalancer",
+            {
+              "Ref": "AmundsenLoadBalancer"
+            },
+            {
+              "Ref": "ParameterLoadBalancerARN"
+            }
+          ]
+        },
+        "Port": 5000,
+        "Protocol": "TCP"
+      },
+      "Type": "AWS::ElasticLoadBalancingV2::Listener"
+    },
+    "AmundsenfrontendTCP5000TargetGroup": {
+      "Properties": {
+        "Port": 5000,
+        "Protocol": "TCP",
+        "Tags": [
+          {
+            "Key": "com.docker.compose.project",
+            "Value": "amundsen"
+          }
+        ],
+        "TargetType": "ip",
+        "VpcId": {
+          "Ref": "ParameterVPCId"
+        }
+      },
+      "Type": "AWS::ElasticLoadBalancingV2::TargetGroup"
+    },
+    "AmundsenfrontendTaskDefinition": {
+      "Properties": {
+        "ContainerDefinitions": [
+          {
+            "Command": [
+              "gunicorn",
+              "-w",
+              "2",
+              "--bind",
+              ":5000",
+              "amundsen_application.wsgi"
+            ],
+            "Environment": [
+              {
+                "Name": "LOCALDOMAIN",
+                "Value": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Ref": "AWS::Region"
+                      },
+                      ".compute.internal",
+                      " amundsen.local"
+                    ]
+                  ]
+                }
+              },
+              {
+                "Name": "METADATASERVICE_BASE",
+                "Value": "http://amundsenmetadata:5000"
+              },
+              {
+                "Name": "FRONTEND_SVC_CONFIG_MODULE_CLASS",
+                "Value": "amundsen_application.config.TestConfig"
+              },
+              {
+                "Name": "SEARCHSERVICE_BASE",
+                "Value": "http://amundsensearch:5000"
+              }
+            ],
+            "Essential": true,
+            "Image": "amundsendev/amundsen-frontend:2.1.1",
+            "LinuxParameters": {},
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": {
+                  "Ref": "LogGroup"
+                },
+                "awslogs-region": {
+                  "Ref": "AWS::Region"
+                },
+                "awslogs-stream-prefix": "amundsen"
+              }
+            },
+            "Name": "amundsenfrontend",
+            "PortMappings": [
+              {
+                "ContainerPort": 5000,
+                "HostPort": 5000,
+                "Protocol": "tcp"
+              }
+            ]
+          }
+        ],
+        "Cpu": "256",
+        "ExecutionRoleArn": {
+          "Ref": "AmundsenfrontendTaskExecutionRole"
+        },
+        "Family": "amundsen-amundsenfrontend",
+        "Memory": "512",
+        "NetworkMode": "awsvpc",
+        "RequiresCompatibilities": [
+          "FARGATE"
+        ]
+      },
+      "Type": "AWS::ECS::TaskDefinition"
+    },
+    "AmundsenfrontendTaskExecutionRole": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "sts:AssumeRole"
+              ],
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ecs-tasks.amazonaws.com"
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy",
+          "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+        ]
+      },
+      "Type": "AWS::IAM::Role"
+    },
+    "AmundsenmetadataService": {
+      "DependsOn": [
+        "Neo4jService"
+      ],
+      "Properties": {
+        "Cluster": {
+          "Fn::If": [
+            "CreateCluster",
+            {
+              "Ref": "Cluster"
+            },
+            {
+              "Ref": "ParameterClusterName"
+            }
+          ]
+        },
+        "DeploymentConfiguration": {
+          "MaximumPercent": 200,
+          "MinimumHealthyPercent": 100
+        },
+        "DeploymentController": {
+          "Type": "ECS"
+        },
+        "DesiredCount": 1,
+        "LaunchType": "FARGATE",
+        "NetworkConfiguration": {
+          "AwsvpcConfiguration": {
+            "AssignPublicIp": "ENABLED",
+            "SecurityGroups": [
+              {
+                "Ref": "AmundsenAmundsennetNetwork"
+              }
+            ],
+            "Subnets": [
+              {
+                "Ref": "ParameterSubnet1Id"
+              },
+              {
+                "Ref": "ParameterSubnet2Id"
+              }
+            ]
+          }
+        },
+        "PlatformVersion": "1.4.0",
+        "PropagateTags": "SERVICE",
+        "SchedulingStrategy": "REPLICA",
+        "ServiceRegistries": [
+          {
+            "RegistryArn": {
+              "Fn::GetAtt": [
+                "AmundsenmetadataServiceDiscoveryEntry",
+                "Arn"
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "com.docker.compose.project",
+            "Value": "amundsen"
+          },
+          {
+            "Key": "com.docker.compose.service",
+            "Value": "amundsenmetadata"
+          }
+        ],
+        "TaskDefinition": {
+          "Ref": "AmundsenmetadataTaskDefinition"
+        }
+      },
+      "Type": "AWS::ECS::Service"
+    },
+    "AmundsenmetadataServiceDiscoveryEntry": {
+      "Properties": {
+        "Description": "\"amundsenmetadata\" service discovery entry in Cloud Map",
+        "DnsConfig": {
+          "DnsRecords": [
+            {
+              "TTL": 60,
+              "Type": "A"
+            }
+          ],
+          "RoutingPolicy": "MULTIVALUE"
+        },
+        "HealthCheckCustomConfig": {
+          "FailureThreshold": 1
+        },
+        "Name": "amundsenmetadata",
+        "NamespaceId": {
+          "Ref": "CloudMap"
+        }
+      },
+      "Type": "AWS::ServiceDiscovery::Service"
+    },
+    "AmundsenmetadataTaskDefinition": {
+      "Properties": {
+        "ContainerDefinitions": [
+          {
+            "Command": [
+              "gunicorn",
+              "-w",
+              "2",
+              "--bind",
+              ":5000",
+              "metadata_service.metadata_wsgi"
+            ],
+            "Environment": [
+              {
+                "Name": "PROXY_HOST",
+                "Value": "bolt://neo4j_amundsen"
+              },
+              {
+                "Name": "LOCALDOMAIN",
+                "Value": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Ref": "AWS::Region"
+                      },
+                      ".compute.internal",
+                      " amundsen.local"
+                    ]
+                  ]
+                }
+              }
+            ],
+            "Essential": true,
+            "Image": "amundsendev/amundsen-metadata:2.0.0",
+            "LinuxParameters": {},
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": {
+                  "Ref": "LogGroup"
+                },
+                "awslogs-region": {
+                  "Ref": "AWS::Region"
+                },
+                "awslogs-stream-prefix": "amundsen"
+              }
+            },
+            "Name": "amundsenmetadata"
+          }
+        ],
+        "Cpu": "256",
+        "ExecutionRoleArn": {
+          "Ref": "AmundsenmetadataTaskExecutionRole"
+        },
+        "Family": "amundsen-amundsenmetadata",
+        "Memory": "512",
+        "NetworkMode": "awsvpc",
+        "RequiresCompatibilities": [
+          "FARGATE"
+        ]
+      },
+      "Type": "AWS::ECS::TaskDefinition"
+    },
+    "AmundsenmetadataTaskExecutionRole": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "sts:AssumeRole"
+              ],
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ecs-tasks.amazonaws.com"
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy",
+          "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+        ]
+      },
+      "Type": "AWS::IAM::Role"
+    },
+    "AmundsensearchService": {
+      "DependsOn": [
+        "ElasticsearchService"
+      ],
+      "Properties": {
+        "Cluster": {
+          "Fn::If": [
+            "CreateCluster",
+            {
+              "Ref": "Cluster"
+            },
+            {
+              "Ref": "ParameterClusterName"
+            }
+          ]
+        },
+        "DeploymentConfiguration": {
+          "MaximumPercent": 200,
+          "MinimumHealthyPercent": 100
+        },
+        "DeploymentController": {
+          "Type": "ECS"
+        },
+        "DesiredCount": 1,
+        "LaunchType": "FARGATE",
+        "NetworkConfiguration": {
+          "AwsvpcConfiguration": {
+            "AssignPublicIp": "ENABLED",
+            "SecurityGroups": [
+              {
+                "Ref": "AmundsenAmundsennetNetwork"
+              }
+            ],
+            "Subnets": [
+              {
+                "Ref": "ParameterSubnet1Id"
+              },
+              {
+                "Ref": "ParameterSubnet2Id"
+              }
+            ]
+          }
+        },
+        "PlatformVersion": "1.4.0",
+        "PropagateTags": "SERVICE",
+        "SchedulingStrategy": "REPLICA",
+        "ServiceRegistries": [
+          {
+            "RegistryArn": {
+              "Fn::GetAtt": [
+                "AmundsensearchServiceDiscoveryEntry",
+                "Arn"
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "com.docker.compose.project",
+            "Value": "amundsen"
+          },
+          {
+            "Key": "com.docker.compose.service",
+            "Value": "amundsensearch"
+          }
+        ],
+        "TaskDefinition": {
+          "Ref": "AmundsensearchTaskDefinition"
+        }
+      },
+      "Type": "AWS::ECS::Service"
+    },
+    "AmundsensearchServiceDiscoveryEntry": {
+      "Properties": {
+        "Description": "\"amundsensearch\" service discovery entry in Cloud Map",
+        "DnsConfig": {
+          "DnsRecords": [
+            {
+              "TTL": 60,
+              "Type": "A"
+            }
+          ],
+          "RoutingPolicy": "MULTIVALUE"
+        },
+        "HealthCheckCustomConfig": {
+          "FailureThreshold": 1
+        },
+        "Name": "amundsensearch",
+        "NamespaceId": {
+          "Ref": "CloudMap"
+        }
+      },
+      "Type": "AWS::ServiceDiscovery::Service"
+    },
+    "AmundsensearchTaskDefinition": {
+      "Properties": {
+        "ContainerDefinitions": [
+          {
+            "Command": [
+              "gunicorn",
+              "-w",
+              "2",
+              "--bind",
+              ":5000",
+              "search_service.search_wsgi"
+            ],
+            "Environment": [
+              {
+                "Name": "PROXY_ENDPOINT",
+                "Value": "es_amundsen"
+              },
+              {
+                "Name": "LOCALDOMAIN",
+                "Value": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Ref": "AWS::Region"
+                      },
+                      ".compute.internal",
+                      " amundsen.local"
+                    ]
+                  ]
+                }
+              }
+            ],
+            "Essential": true,
+            "Image": "amundsendev/amundsen-search:2.1.3",
+            "LinuxParameters": {},
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": {
+                  "Ref": "LogGroup"
+                },
+                "awslogs-region": {
+                  "Ref": "AWS::Region"
+                },
+                "awslogs-stream-prefix": "amundsen"
+              }
+            },
+            "Name": "amundsensearch"
+          }
+        ],
+        "Cpu": "256",
+        "ExecutionRoleArn": {
+          "Ref": "AmundsensearchTaskExecutionRole"
+        },
+        "Family": "amundsen-amundsensearch",
+        "Memory": "512",
+        "NetworkMode": "awsvpc",
+        "RequiresCompatibilities": [
+          "FARGATE"
+        ]
+      },
+      "Type": "AWS::ECS::TaskDefinition"
+    },
+    "AmundsensearchTaskExecutionRole": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "sts:AssumeRole"
+              ],
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ecs-tasks.amazonaws.com"
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy",
+          "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+        ]
+      },
+      "Type": "AWS::IAM::Role"
+    },
+    "CloudMap": {
+      "Properties": {
+        "Description": "Service Map for Docker Compose project amundsen",
+        "Name": "amundsen.local",
+        "Vpc": {
+          "Ref": "ParameterVPCId"
+        }
+      },
+      "Type": "AWS::ServiceDiscovery::PrivateDnsNamespace"
+    },
+    "Cluster": {
+      "Condition": "CreateCluster",
+      "Properties": {
+        "ClusterName": "amundsen",
+        "Tags": [
+          {
+            "Key": "com.docker.compose.project",
+            "Value": "amundsen"
+          }
+        ]
+      },
+      "Type": "AWS::ECS::Cluster"
+    },
+    "ElasticsearchService": {
+      "DependsOn": [
+        "ElasticsearchTCP9200Listener"
+      ],
+      "Properties": {
+        "Cluster": {
+          "Fn::If": [
+            "CreateCluster",
+            {
+              "Ref": "Cluster"
+            },
+            {
+              "Ref": "ParameterClusterName"
+            }
+          ]
+        },
+        "DeploymentConfiguration": {
+          "MaximumPercent": 200,
+          "MinimumHealthyPercent": 100
+        },
+        "DeploymentController": {
+          "Type": "ECS"
+        },
+        "DesiredCount": 1,
+        "LaunchType": "FARGATE",
+        "LoadBalancers": [
+          {
+            "ContainerName": "elasticsearch",
+            "ContainerPort": 9200,
+            "TargetGroupArn": {
+              "Ref": "ElasticsearchTCP9200TargetGroup"
+            }
+          }
+        ],
+        "NetworkConfiguration": {
+          "AwsvpcConfiguration": {
+            "AssignPublicIp": "ENABLED",
+            "SecurityGroups": [
+              {
+                "Ref": "AmundsenAmundsennetNetwork"
+              }
+            ],
+            "Subnets": [
+              {
+                "Ref": "ParameterSubnet1Id"
+              },
+              {
+                "Ref": "ParameterSubnet2Id"
+              }
+            ]
+          }
+        },
+        "PlatformVersion": "1.4.0",
+        "PropagateTags": "SERVICE",
+        "SchedulingStrategy": "REPLICA",
+        "ServiceRegistries": [
+          {
+            "RegistryArn": {
+              "Fn::GetAtt": [
+                "ElasticsearchServiceDiscoveryEntry",
+                "Arn"
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "com.docker.compose.project",
+            "Value": "amundsen"
+          },
+          {
+            "Key": "com.docker.compose.service",
+            "Value": "elasticsearch"
+          }
+        ],
+        "TaskDefinition": {
+          "Ref": "ElasticsearchTaskDefinition"
+        }
+      },
+      "Type": "AWS::ECS::Service"
+    },
+    "ElasticsearchServiceDiscoveryEntry": {
+      "Properties": {
+        "Description": "\"elasticsearch\" service discovery entry in Cloud Map",
+        "DnsConfig": {
+          "DnsRecords": [
+            {
+              "TTL": 60,
+              "Type": "A"
+            }
+          ],
+          "RoutingPolicy": "MULTIVALUE"
+        },
+        "HealthCheckCustomConfig": {
+          "FailureThreshold": 1
+        },
+        "Name": "elasticsearch",
+        "NamespaceId": {
+          "Ref": "CloudMap"
+        }
+      },
+      "Type": "AWS::ServiceDiscovery::Service"
+    },
+    "ElasticsearchTCP9200Listener": {
+      "Properties": {
+        "DefaultActions": [
+          {
+            "ForwardConfig": {
+              "TargetGroups": [
+                {
+                  "TargetGroupArn": {
+                    "Ref": "ElasticsearchTCP9200TargetGroup"
+                  }
+                }
+              ]
+            },
+            "Type": "forward"
+          }
+        ],
+        "LoadBalancerArn": {
+          "Fn::If": [
+            "CreateLoadBalancer",
+            {
+              "Ref": "AmundsenLoadBalancer"
+            },
+            {
+              "Ref": "ParameterLoadBalancerARN"
+            }
+          ]
+        },
+        "Port": 9200,
+        "Protocol": "TCP"
+      },
+      "Type": "AWS::ElasticLoadBalancingV2::Listener"
+    },
+    "ElasticsearchTCP9200TargetGroup": {
+      "Properties": {
+        "Port": 9200,
+        "Protocol": "TCP",
+        "Tags": [
+          {
+            "Key": "com.docker.compose.project",
+            "Value": "amundsen"
+          }
+        ],
+        "TargetType": "ip",
+        "VpcId": {
+          "Ref": "ParameterVPCId"
+        }
+      },
+      "Type": "AWS::ElasticLoadBalancingV2::TargetGroup"
+    },
+    "ElasticsearchTaskDefinition": {
+      "Properties": {
+        "ContainerDefinitions": [
+          {
+            "Environment": [
+              {
+                "Name": "LOCALDOMAIN",
+                "Value": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Ref": "AWS::Region"
+                      },
+                      ".compute.internal",
+                      " amundsen.local"
+                    ]
+                  ]
+                }
+              }
+            ],
+            "Essential": true,
+            "Image": "elasticsearch:6.7.0",
+            "LinuxParameters": {},
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": {
+                  "Ref": "LogGroup"
+                },
+                "awslogs-region": {
+                  "Ref": "AWS::Region"
+                },
+                "awslogs-stream-prefix": "amundsen"
+              }
+            },
+            "Name": "elasticsearch",
+            "PortMappings": [
+              {
+                "ContainerPort": 9200,
+                "HostPort": 9200,
+                "Protocol": "tcp"
+              }
+            ]
+          }
+        ],
+        "Cpu": "256",
+        "ExecutionRoleArn": {
+          "Ref": "ElasticsearchTaskExecutionRole"
+        },
+        "Family": "amundsen-elasticsearch",
+        "Memory": "512",
+        "NetworkMode": "awsvpc",
+        "RequiresCompatibilities": [
+          "FARGATE"
+        ]
+      },
+      "Type": "AWS::ECS::TaskDefinition"
+    },
+    "ElasticsearchTaskExecutionRole": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "sts:AssumeRole"
+              ],
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ecs-tasks.amazonaws.com"
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy",
+          "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+        ]
+      },
+      "Type": "AWS::IAM::Role"
+    },
+    "LogGroup": {
+      "Properties": {
+        "LogGroupName": "/docker-compose/amundsen"
+      },
+      "Type": "AWS::Logs::LogGroup"
+    },
+    "Neo4jService": {
+      "DependsOn": [
+        "Neo4jTCP7474Listener",
+        "Neo4jTCP7687Listener"
+      ],
+      "Properties": {
+        "Cluster": {
+          "Fn::If": [
+            "CreateCluster",
+            {
+              "Ref": "Cluster"
+            },
+            {
+              "Ref": "ParameterClusterName"
+            }
+          ]
+        },
+        "DeploymentConfiguration": {
+          "MaximumPercent": 200,
+          "MinimumHealthyPercent": 100
+        },
+        "DeploymentController": {
+          "Type": "ECS"
+        },
+        "DesiredCount": 1,
+        "LaunchType": "FARGATE",
+        "LoadBalancers": [
+          {
+            "ContainerName": "neo4j",
+            "ContainerPort": 7474,
+            "TargetGroupArn": {
+              "Ref": "Neo4jTCP7474TargetGroup"
+            }
+          },
+          {
+            "ContainerName": "neo4j",
+            "ContainerPort": 7687,
+            "TargetGroupArn": {
+              "Ref": "Neo4jTCP7687TargetGroup"
+            }
+          }
+        ],
+        "NetworkConfiguration": {
+          "AwsvpcConfiguration": {
+            "AssignPublicIp": "ENABLED",
+            "SecurityGroups": [
+              {
+                "Ref": "AmundsenAmundsennetNetwork"
+              }
+            ],
+            "Subnets": [
+              {
+                "Ref": "ParameterSubnet1Id"
+              },
+              {
+                "Ref": "ParameterSubnet2Id"
+              }
+            ]
+          }
+        },
+        "PlatformVersion": "1.4.0",
+        "PropagateTags": "SERVICE",
+        "SchedulingStrategy": "REPLICA",
+        "ServiceRegistries": [
+          {
+            "RegistryArn": {
+              "Fn::GetAtt": [
+                "Neo4jServiceDiscoveryEntry",
+                "Arn"
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "com.docker.compose.project",
+            "Value": "amundsen"
+          },
+          {
+            "Key": "com.docker.compose.service",
+            "Value": "neo4j"
+          }
+        ],
+        "TaskDefinition": {
+          "Ref": "Neo4jTaskDefinition"
+        }
+      },
+      "Type": "AWS::ECS::Service"
+    },
+    "Neo4jServiceDiscoveryEntry": {
+      "Properties": {
+        "Description": "\"neo4j\" service discovery entry in Cloud Map",
+        "DnsConfig": {
+          "DnsRecords": [
+            {
+              "TTL": 60,
+              "Type": "A"
+            }
+          ],
+          "RoutingPolicy": "MULTIVALUE"
+        },
+        "HealthCheckCustomConfig": {
+          "FailureThreshold": 1
+        },
+        "Name": "neo4j",
+        "NamespaceId": {
+          "Ref": "CloudMap"
+        }
+      },
+      "Type": "AWS::ServiceDiscovery::Service"
+    },
+    "Neo4jTCP7474Listener": {
+      "Properties": {
+        "DefaultActions": [
+          {
+            "ForwardConfig": {
+              "TargetGroups": [
+                {
+                  "TargetGroupArn": {
+                    "Ref": "Neo4jTCP7474TargetGroup"
+                  }
+                }
+              ]
+            },
+            "Type": "forward"
+          }
+        ],
+        "LoadBalancerArn": {
+          "Fn::If": [
+            "CreateLoadBalancer",
+            {
+              "Ref": "AmundsenLoadBalancer"
+            },
+            {
+              "Ref": "ParameterLoadBalancerARN"
+            }
+          ]
+        },
+        "Port": 7474,
+        "Protocol": "TCP"
+      },
+      "Type": "AWS::ElasticLoadBalancingV2::Listener"
+    },
+    "Neo4jTCP7474TargetGroup": {
+      "Properties": {
+        "Port": 7474,
+        "Protocol": "TCP",
+        "Tags": [
+          {
+            "Key": "com.docker.compose.project",
+            "Value": "amundsen"
+          }
+        ],
+        "TargetType": "ip",
+        "VpcId": {
+          "Ref": "ParameterVPCId"
+        }
+      },
+      "Type": "AWS::ElasticLoadBalancingV2::TargetGroup"
+    },
+    "Neo4jTCP7687Listener": {
+      "Properties": {
+        "DefaultActions": [
+          {
+            "ForwardConfig": {
+              "TargetGroups": [
+                {
+                  "TargetGroupArn": {
+                    "Ref": "Neo4jTCP7687TargetGroup"
+                  }
+                }
+              ]
+            },
+            "Type": "forward"
+          }
+        ],
+        "LoadBalancerArn": {
+          "Fn::If": [
+            "CreateLoadBalancer",
+            {
+              "Ref": "AmundsenLoadBalancer"
+            },
+            {
+              "Ref": "ParameterLoadBalancerARN"
+            }
+          ]
+        },
+        "Port": 7687,
+        "Protocol": "TCP"
+      },
+      "Type": "AWS::ElasticLoadBalancingV2::Listener"
+    },
+    "Neo4jTCP7687TargetGroup": {
+      "Properties": {
+        "Port": 7687,
+        "Protocol": "TCP",
+        "Tags": [
+          {
+            "Key": "com.docker.compose.project",
+            "Value": "amundsen"
+          }
+        ],
+        "TargetType": "ip",
+        "VpcId": {
+          "Ref": "ParameterVPCId"
+        }
+      },
+      "Type": "AWS::ElasticLoadBalancingV2::TargetGroup"
+    },
+    "Neo4jTaskDefinition": {
+      "Properties": {
+        "ContainerDefinitions": [
+          {
+            "Environment": [
+              {
+                "Name": "NEO4J_AUTH",
+                "Value": "neo4j/test"
+              },
+              {
+                "Name": "LOCALDOMAIN",
+                "Value": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Ref": "AWS::Region"
+                      },
+                      ".compute.internal",
+                      " amundsen.local"
+                    ]
+                  ]
+                }
+              }
+            ],
+            "Essential": true,
+            "Image": "neo4j:3.3.0",
+            "LinuxParameters": {},
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": {
+                  "Ref": "LogGroup"
+                },
+                "awslogs-region": {
+                  "Ref": "AWS::Region"
+                },
+                "awslogs-stream-prefix": "amundsen"
+              }
+            },
+            "Name": "neo4j",
+            "PortMappings": [
+              {
+                "ContainerPort": 7474,
+                "HostPort": 7474,
+                "Protocol": "tcp"
+              },
+              {
+                "ContainerPort": 7687,
+                "HostPort": 7687,
+                "Protocol": "tcp"
+              }
+            ]
+          }
+        ],
+        "Cpu": "256",
+        "ExecutionRoleArn": {
+          "Ref": "Neo4jTaskExecutionRole"
+        },
+        "Family": "amundsen-neo4j",
+        "Memory": "512",
+        "NetworkMode": "awsvpc",
+        "RequiresCompatibilities": [
+          "FARGATE"
+        ]
+      },
+      "Type": "AWS::ECS::TaskDefinition"
+    },
+    "Neo4jTaskExecutionRole": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "sts:AssumeRole"
+              ],
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ecs-tasks.amazonaws.com"
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy",
+          "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+        ]
+      },
+      "Type": "AWS::IAM::Role"
+    }
+  }
+}
